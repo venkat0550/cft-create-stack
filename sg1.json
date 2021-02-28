@@ -1,0 +1,181 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "Cloudformation Template to Notify the Security Group Status",
+    "Parameters": {
+        "SNSNameCustomer01": {
+            "Type": "String",
+            "Description": "Enter the SNS Name for notifications to Customer"
+        },
+        "SNSEmailEndpointCustomer01": {
+            "Type": "String",
+            "Description": "Enter the email address for  notifications"
+        },
+        "AWSAcccountName": {
+            "Type": "String",
+            "Description": "Enter the AWSAcccountName No. Ex. RCC Or RSA (Not the AWS ACC No)"
+        },
+        "IAMRoleForLambda": {
+            "Type": "String",
+            "Description": "Enter the IAM Role Name to be created and attached for Lambda Function Ex. RRCCAWS_<>_<>"
+        },
+        "IAMPolicyForLambda": {
+            "Type": "String",
+            "Description": "Enter the IAM Policy Name to be created and attached for Lambda Function IAM Role Ex. PRCCAWS_<>_<>"
+        },
+        "CWEventRuleName": {
+            "Type": "String",
+            "Description": "Enter the CloudWatch Event Rule Name NVSGIS<>-SG-STATUS-LAMBDA"
+        }
+    },
+    "Resources": {
+        "IAMRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "RoleName": {
+                    "Ref": "IAMRoleForLambda"
+                },
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": "sts:AssumeRole",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "lambda.amazonaws.com"
+                            }
+                        }
+                    ],
+                    "Version": "2012-10-17"
+                },
+                "Path": "/"
+            }
+        },
+        "IAMPolicy": {
+            "Type": "AWS::IAM::Policy",
+            "Properties": {
+                "PolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "ec2:Describe*",
+                                "ec2:Get*",
+                                "ec2:DeleteSecurityGroup",
+								"sns:Publish"
+                            ],
+                            "Effect": "Allow",
+                            "Resource": "*",
+                            "Sid": "AllowLambdaToDescribeSecurityGroupsInstancesAndDeleteSecurityGroups"
+                        }
+                    ],
+                    "Version": "2012-10-17"
+                },
+                "PolicyName": {
+                    "Ref": "IAMPolicyForLambda"
+                },
+                "Roles": [
+                    {
+                        "Ref": "IAMRole"
+                    }
+                ]
+            }
+        },
+        "Lambda01": {
+            "Type": "AWS::Lambda::Function",
+            "DependsOn": "SNSCustomer01",
+            "Properties": {
+                "Code": {
+                    "ZipFile": "import json\nimport boto3\nimport os\n\ndef publish_sns(msg):\n    sns = boto3.client('sns', region_name=os.environ['CurrentRegion'])\n    sns.publish(\n        TopicArn=os.environ['SNSTopic'],\n        Message=msg,\n        Subject='ALERT-SG-STATUS'\n    )\n\n\ndef list_sg(region):\n    ec2_resource = boto3.resource('ec2', region_name=region)\n    all_vpc_without_default_sg_ids=[]\n    all_vpc_default_sg_ids = []\n    all_vpc_nwint_attached_sg_ids=[]\n    for vpc in ec2_resource.vpcs.all():\n        for sg in vpc.security_groups.all():\n            if sg.group_name != \"default\":\n                all_vpc_without_default_sg_ids.append(sg.group_id)\n            else:\n                all_vpc_default_sg_ids.append(sg.group_id)\n        for nwint in vpc.network_interfaces.all():\n            nwint_attached_sgs = nwint.groups\n            for sg in nwint_attached_sgs:\n                 all_vpc_nwint_attached_sg_ids.append(sg[\"GroupId\"])\n    all_sg_nwint_attached = set(all_vpc_nwint_attached_sg_ids)\n    all_vpc_sg_available = set(all_vpc_without_default_sg_ids)\n    remaining_sgs = set(all_vpc_sg_available - all_sg_nwint_attached)\n\n    if len(all_sg_nwint_attached) !=0:\n        all_sg_nwint_attached = all_sg_nwint_attached\n    else:\n        all_sg_nwint_attached = \"NIL\"\n\n    if len(remaining_sgs) !=0:\n        remaining_sgs = remaining_sgs\n    else:\n        remaining_sgs = \"NIL\"\n\n    if len(all_vpc_default_sg_ids) !=0:\n        all_vpc_default_sg_ids = set(all_vpc_default_sg_ids)\n    else:\n        all_vpc_default_sg_ids = \"NIL\"\n\n    return all_sg_nwint_attached, all_vpc_default_sg_ids, remaining_sgs\n\ndef lambda_handler(event, context):\n    regions = ['us-west-2', 'us-east-1']\n    msg = \"\"\n    linefeed = \"===================================\"\n    for region in regions:\n        inuse, default, unused = list_sg(region)\n        region=region.upper()\n        text = \"\"\"\n{linefeed}\nSG_STATUS_REGION_{region1}\n\n  INUSE_SG's:\n    {inuse1}\n    \n  DEFAULT_SG's:\n    {default1}\n    \n  UNUSED_SG's:\n    {unused1}\n\n        \"\"\"\n        msg+=text.format(region1=region, inuse1=inuse, default1=default, unused1=unused, linefeed=linefeed)\n    publish_sns(msg)\n"
+                },
+                "Description": "Send Email to customer about the used/unused/default Security Groups",
+                "Environment": {
+                    "Variables": {
+                        "SNSTopic": {
+                            "Ref": "SNSCustomer01"
+                        },
+						"CurrentRegion":{ "Ref" : "AWS::Region" }
+                    }
+                },
+                "FunctionName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "NVSGIS",
+                            {
+                                "Ref": "AWSAcccountName"
+                            },
+                            "SECURITY-GROUP-STATUS"
+                        ]
+                    ]
+                },
+                "Handler": "index.lambda_handler",
+                "MemorySize": 512,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "IAMRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.7",
+                "Timeout": 300
+            }
+        },
+        "LambdaInvokeByCWEventRule": {
+            "Type": "AWS::Lambda::Permission",
+            "Properties": {
+                "Action": "lambda:InvokeFunction",
+                "FunctionName": {
+                    "Fn::GetAtt": [
+                        "Lambda01",
+                        "Arn"
+                    ]
+                },
+                "Principal": "events.amazonaws.com",
+                "SourceArn": {
+                    "Fn::GetAtt": [
+                        "CWEventRule",
+                        "Arn"
+                    ]
+                }
+            }
+        },
+        "CWEventRule": {
+            "Type": "AWS::Events::Rule",
+            "Properties": {
+                "Name": {
+                    "Ref": "CWEventRuleName"
+                },
+                "ScheduleExpression": "rate(7 days)",
+                "State": "ENABLED",
+                "Targets": [
+                    {
+                        "Arn": {
+                            "Fn::GetAtt": [
+                                "Lambda01",
+                                "Arn"
+                            ]
+                        },
+                        "Id": "Target0"
+                    }
+                ]
+            }
+        },
+        "SNSCustomer01": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "DisplayName": {
+                    "Ref": "SNSNameCustomer01"
+                },
+                "Subscription": [
+                    {
+                        "Endpoint": {
+                            "Ref": "SNSEmailEndpointCustomer01"
+                        },
+                        "Protocol": "email"
+                    }
+                ],
+                "TopicName": {
+                    "Ref": "SNSNameCustomer01"
+                }
+            }
+        }
+    }
+}
