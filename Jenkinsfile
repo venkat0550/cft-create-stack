@@ -3,7 +3,7 @@ pipeline {
   parameters {
     string(name: 'stack_name', defaultValue : 'testsg11', description: "Stack Name")
     string(name: 'SNSNameCustomer01', defaultValue : 'nvsgissnssg11', description: "SNS Topic Name")
-    string(name: 'SNSEmailEndpointCustomer01', defaultValue : 'venkatesan.k@8kmiles.com', description: "Subscription Email Address")
+    string(name: 'SNSEmailEndpointCustomer01', defaultValue : 'abc@xyz.com', description: "Subscription Email Address")
     string(name: 'AWSAcccountName', defaultValue : 'RCCSBX11', description: "AWS Account name Ex RCCSBX ..")
     string(name: 'IAMRoleForLambda', defaultValue : 'RRCCSBX_AWS_AWSSG11', description: "IAM Role Name")
     string(name: 'IAMPolicyForLambda', defaultValue : 'PRCCSBXAWSAWSSG11', description: "IAM Policy Name")
